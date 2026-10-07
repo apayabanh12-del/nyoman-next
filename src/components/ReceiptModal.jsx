@@ -1,10 +1,18 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import confetti from 'canvas-confetti';
-import { Printer, CheckCircle, X, Store, Receipt } from 'lucide-react';
+import { Printer, CheckCircle, X, Store } from 'lucide-react';
 import { formatRupiah, formatDate } from '@/lib/api';
+
+const escapeHtml = (v) =>
+  String(v ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
 
 export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
   useEffect(() => {
@@ -15,26 +23,10 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
         spread: 60,
         origin: { y: 0.6 },
       });
-      // Penanda untuk CSS print: sembunyikan semua selain struk
-      document.body.classList.add('printing-receipt');
     }
-    return () => document.body.classList.remove('printing-receipt');
   }, [isOpen]);
 
   if (!isOpen || !transaction) return null;
-
-  const handlePrint = () => {
-    const el = document.getElementById('printable-receipt');
-    // Hitung tinggi struk (px -> mm) supaya ukuran kertas pas dengan isi struk
-    const heightMm = el ? Math.ceil((el.scrollHeight * 25.4) / 96) + 10 : 200;
-
-    const style = document.createElement('style');
-    style.innerHTML = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
-    document.head.appendChild(style);
-
-    window.print();
-    setTimeout(() => style.remove(), 1000);
-  };
 
   const {
     invoice_no,
@@ -55,11 +47,114 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
   const memberDisplay = member?.nama || member_nama || 'Umum (Non-Member)';
   const trxDate = tanggal || tanggal_transaksi || new Date();
 
-  return createPortal(
-    <div className="receipt-portal fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
-      <div className="receipt-card bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+  const handlePrint = () => {
+    const rows = (items || [])
+      .map(
+        (item) => `
+        <div class="item">
+          <div class="name">${escapeHtml(item.nama_barang)}</div>
+          <div class="row">
+            <span>${escapeHtml(item.jumlah)} x ${escapeHtml(formatRupiah(item.harga))}</span>
+            <span>${escapeHtml(formatRupiah(item.subtotal))}</span>
+          </div>
+        </div>`
+      )
+      .join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Struk ${escapeHtml(invoice_no)}</title>
+<style>
+  @page { size: 80mm auto; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body {
+    width: 80mm;
+    padding: 4mm;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    color: #000;
+  }
+  .center { text-align: center; }
+  .title { font-weight: bold; font-size: 14px; }
+  .small { font-size: 11px; }
+  .dash { border-top: 1px dashed #000; margin: 6px 0; }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  .bold { font-weight: bold; }
+  .total { font-size: 14px; font-weight: bold; }
+  .item { margin-bottom: 6px; }
+  .name { font-weight: bold; word-break: break-word; }
+  .head { font-size: 10px; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div class="center">
+    <div class="title">POS TOKO SMK SEJAHTERA</div>
+    <div class="small">Jl. Pendidikan No. 108, Denpasar, Bali</div>
+    <div class="small">Telp: 0812-3456-7890</div>
+  </div>
+  <div class="dash"></div>
+
+  <div class="small">
+    <div class="row"><span>No. Invoice:</span><span class="bold">${escapeHtml(invoice_no)}</span></div>
+    <div class="row"><span>Tanggal:</span><span>${escapeHtml(formatDate(trxDate))}</span></div>
+    <div class="row"><span>Kasir:</span><span>${escapeHtml(cashierDisplay)}</span></div>
+    <div class="row"><span>Pelanggan:</span><span>${escapeHtml(memberDisplay)}</span></div>
+  </div>
+  <div class="dash"></div>
+
+  <div class="row head"><span>Item</span><span>Subtotal</span></div>
+  <div style="margin-top:4px">${rows}</div>
+  <div class="dash"></div>
+
+  <div class="row total"><span>TOTAL:</span><span>${escapeHtml(formatRupiah(total))}</span></div>
+  <div class="row small"><span>Tunai / Bayar:</span><span>${escapeHtml(formatRupiah(bayar))}</span></div>
+  <div class="row small bold"><span>Kembalian:</span><span>${escapeHtml(formatRupiah(kembalian))}</span></div>
+  <div class="dash"></div>
+
+  <div class="center small">
+    <div class="bold">*** TERIMA KASIH ***</div>
+    <div>Barang yang sudah dibeli tidak dapat ditukar atau dikembalikan.</div>
+    <div style="font-size:9px;margin-top:4px">Powered by Aplikasi POS SMK</div>
+  </div>
+</body>
+</html>`;
+
+    // Iframe tersembunyi khusus untuk cetak struk
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText =
+      'position:fixed;left:-9999px;top:0;width:400px;height:800px;border:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(iframe);
+
+    const win = iframe.contentWindow;
+    const doc = win.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    setTimeout(() => {
+      // Hitung tinggi struk (px -> mm) supaya kertas pas, tidak ada sisa kosong
+      const heightMm = Math.ceil((doc.body.scrollHeight * 25.4) / 96) + 4;
+      const style = doc.createElement('style');
+      style.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+      doc.head.appendChild(style);
+
+      win.onafterprint = () => iframe.remove();
+      win.focus();
+      win.print();
+
+      // Cadangan kalau afterprint tidak terpanggil
+      setTimeout(() => iframe.remove(), 120000);
+    }, 300);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
-        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center no-print">
+        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-5 h-5 text-emerald-200" />
             <h3 className="font-bold text-base">Transaksi Berhasil!</h3>
@@ -72,8 +167,8 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
           </button>
         </div>
 
-        {/* Scrollable Receipt Body */}
-        <div className="receipt-scroll p-6 overflow-y-auto bg-slate-100/60 flex justify-center">
+        {/* Scrollable Receipt Body (tampilan di layar) */}
+        <div className="p-6 overflow-y-auto bg-slate-100/60 flex justify-center">
           <div
             id="printable-receipt"
             className="w-full max-w-[340px] bg-white p-5 rounded-lg shadow-sm border border-slate-200 font-mono text-xs text-slate-800"
@@ -81,7 +176,7 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
             {/* Toko Header */}
             <div className="text-center pb-3 border-b border-dashed border-slate-300">
               <div className="flex items-center justify-center gap-1 font-bold text-base text-slate-900">
-                <Store className="w-4 h-4 text-indigo-600 inline no-print" />
+                <Store className="w-4 h-4 text-indigo-600 inline" />
                 POS TOKO SMK SEJAHTERA
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5">
@@ -162,7 +257,7 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
         </div>
 
         {/* Modal Action Buttons */}
-        <div className="bg-white p-4 border-t border-slate-100 flex items-center justify-between gap-3 no-print">
+        <div className="bg-white p-4 border-t border-slate-100 flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={onClose}
@@ -180,7 +275,6 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
           </button>
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
 };
