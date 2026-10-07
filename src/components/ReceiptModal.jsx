@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import confetti from 'canvas-confetti';
 import { Printer, CheckCircle, X, Store, Receipt } from 'lucide-react';
 import { formatRupiah, formatDate } from '@/lib/api';
@@ -14,13 +15,25 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
         spread: 60,
         origin: { y: 0.6 },
       });
+      // Penanda untuk CSS print: sembunyikan semua selain struk
+      document.body.classList.add('printing-receipt');
     }
+    return () => document.body.classList.remove('printing-receipt');
   }, [isOpen]);
 
   if (!isOpen || !transaction) return null;
 
   const handlePrint = () => {
+    const el = document.getElementById('printable-receipt');
+    // Hitung tinggi struk (px -> mm) supaya ukuran kertas pas dengan isi struk
+    const heightMm = el ? Math.ceil((el.scrollHeight * 25.4) / 96) + 10 : 200;
+
+    const style = document.createElement('style');
+    style.innerHTML = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+    document.head.appendChild(style);
+
     window.print();
+    setTimeout(() => style.remove(), 1000);
   };
 
   const {
@@ -42,9 +55,9 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
   const memberDisplay = member?.nama || member_nama || 'Umum (Non-Member)';
   const trxDate = tanggal || tanggal_transaksi || new Date();
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+  return createPortal(
+    <div className="receipt-portal fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fadeIn">
+      <div className="receipt-card bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="bg-emerald-600 p-4 text-white flex justify-between items-center no-print">
           <div className="flex items-center gap-2">
@@ -60,7 +73,7 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
         </div>
 
         {/* Scrollable Receipt Body */}
-        <div className="p-6 overflow-y-auto bg-slate-100/60 flex justify-center">
+        <div className="receipt-scroll p-6 overflow-y-auto bg-slate-100/60 flex justify-center">
           <div
             id="printable-receipt"
             className="w-full max-w-[340px] bg-white p-5 rounded-lg shadow-sm border border-slate-200 font-mono text-xs text-slate-800"
@@ -167,6 +180,7 @@ export const ReceiptModal = ({ isOpen, onClose, transaction }) => {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
